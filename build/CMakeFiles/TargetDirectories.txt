@@ -1,0 +1,3 @@
+/home/zon/test/vs/queue_threads/build/CMakeFiles/main.dir
+/home/zon/test/vs/queue_threads/build/CMakeFiles/edit_cache.dir
+/home/zon/test/vs/queue_threads/build/CMakeFiles/rebuild_cache.dir
