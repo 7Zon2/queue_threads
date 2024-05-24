@@ -9,8 +9,8 @@ set(msvc_cxx "$<COMPILE_LANG_AND_ID:CXX,MSVC>")
 
 
 target_compile_options(flags INTERFACE 
-                        "$<${gcc_like_cxx}:$<BUILD_INTERFACE:-Wall;-Wextra;>>"
-                        "$<${msvc_cxx}:$<BUILD_INTERFACE:-W3>>"
+                        "$<${gcc_like_cxx}:$<BUILD_INTERFACE:-Wall;-Wextra;-O2>>"
+                        "$<${msvc_cxx}:$<BUILD_INTERFACE:-W3;-O2>>"
 )
 
 target_compile_features(flags INTERFACE cxx_std_20)
