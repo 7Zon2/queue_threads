@@ -1,4 +1,5 @@
 /.vscode
 /ghex
-cycle.sh
 main
+/build
+cycle.sh
