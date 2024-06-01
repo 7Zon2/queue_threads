@@ -1,25 +1,22 @@
-#include <iostream>
-#include <memory>
-#include <thread>
-#include <mutex>
-#include <future>
-#include <chrono>
-#include <condition_variable>
-#include <utility>
-#include <vector>
-#include <new>
-#include <queue>
-#include <atomic>
-#include <list>
+#include "include/pre_header.hpp"
 #include "include/exception_handler.hpp"
 #include "include/mv_func.hpp"
+#include "include/policy.hpp"
 #include "tests/tests.hpp"
+
 
 	using namespace std::literals;
 
 
+	template<typename X,typename...Z>
+	struct obj
+	{
+		using type=X;
+	};
+
 
 	template<size_t Prod, size_t Cons>
+	requires ((Prod > 0) && (Cons > 0))
 	class worker final
 	{
 		private:
@@ -35,6 +32,7 @@
 
 			std::vector <atomic_pair> pjvec_;//vector of producers
 			std::vector <atomic_pair> cjvec_;//vector of consumers
+
 
 			//stores tasks that will be produced for consumers. List due to invalidation iterators is not needed
 			std::list<In> list_prod;
@@ -63,7 +61,7 @@
 					work_foo Prod_foo;			
 
 					//being executed future of producer
-					std::shared_future<void> prod_future;
+					std::any prod_future;
 
 					//stores tasks  that will be consumed after any task was produced by any thread
 					work_queue cons_out;
@@ -76,7 +74,7 @@
 			
 				public:
 
-					In(work_foo&& foo,std::shared_future<void>&& future) noexcept 
+					In(work_foo&& foo,std::any&& future) noexcept 
 						: Prod_foo(std::move(foo)),prod_future(std::move(future)){}
 
 
@@ -192,17 +190,16 @@
 					for (size_t j=0;j<cjvec_.size();j++)
 					{              
 						if(cjvec_[j].second) continue;
+
 						{
-							{
-								std::lock_guard<std::mutex> lock(mt_);
+							std::lock_guard<std::mutex> lock(mt_);
 
-								if(b->cons_out.empty()) break;
+							if(b->cons_out.empty()) break;
 
-								cjvec_[j].second = true;
+							cjvec_[j].second = true;
 								
-								cjvec_[j].first  = std::jthread{std::move(b->cons_out.front()),std::ref(cjvec_[j].second)};
-								b->cons_out.pop();
-							}
+							cjvec_[j].first  = std::jthread{std::move(b->cons_out.front()),std::ref(cjvec_[j].second)};
+							b->cons_out.pop();
 						}
 					}
 
@@ -212,6 +209,11 @@
 				}
 			}
 
+
+		public:
+
+
+			worker():pjvec_(Prod),cjvec_(Cons){}
 
 			bool all_done()
 			{
@@ -223,17 +225,26 @@
 				return true;
 			}
 
-		public:
-
-
-			worker():pjvec_(Prod),cjvec_(Cons){}
+			/// @brief  erases all producer from list if all work done
+			/// @return true - cleaning was successed otherwise false
+			[[nodiscard]]
+			bool clear_all() noexcept
+			{
+				if(all_done()){
+					list_prod.clear();
+					prod_counter.load(std::memory_order_relaxed);
+					return true;
+				}
+				return false;
+			}
 
 
 			[[nodiscard]]
 			auto& get_producer()
 			{
 				std::packaged_task<void(void)> mv{[](){}};
-				auto fut=mv.get_future();
+				std::shared_future fut=mv.get_future();
+				std::any some=std::move(fut);
 
 				work_foo f
 				{
@@ -245,7 +256,7 @@
 				};
 		
 				std::lock_guard<std::mutex> lk(mt2_);
-				list_prod.emplace_back(std::move(f),std::move(fut));
+				list_prod.emplace_back(std::move(f),std::move(some));
 				return list_prod.back();
 			}
 
@@ -257,15 +268,16 @@
             template<typename F,typename...Args>
             requires std::is_invocable_v<F,Args...> 
 			[[nodiscard]]
-            auto& manager_tasks_in(F&&f,Args&&...args)
+            auto& manager_tasks_in( F&&f,Args&&...args)
             {
 
 				using ret=std::invoke_result_t<F,Args...>;
 
 				std::packaged_task<ret(Args...)> mv_{std::move(f)};   
 
-				std::future<void> fut_=mv_.get_future();
+				std::shared_future<ret> foo=mv_.get_future();
 
+				std::any fut_=std::move(foo);
 
 					work_foo task{
 					[mv=std::move(mv_),tup=std::make_tuple(std::forward<Args>(args)...)]
@@ -297,22 +309,23 @@
 			/// @param in binder-proxy class given by function-producer
 			/// @param f callable function-consumer
 			/// @param ...Arguments for its
-			template<typename F,typename...Args>
-			requires std::is_invocable_v<F,Args...>
-			void manager_tasks_out(In& in, F&& f,Args&&...args)
+			template<typename P,typename F,typename...Args>
+			requires ((is_policy<P>) && (std::is_invocable_v<F,Args...>))
+			void manager_tasks_out(P p,In& in, F&& f,Args&&...args)
 			{
 				using ret=std::invoke_result_t<F,Args...>;
 
 				std::packaged_task<ret(Args...)> mv_{std::move(f)};   
-				
-		
+																		
 
-					//saves the arrived consumer for the last producer, otherwise if the size of consumer-functions
+				if constexpr(std::is_same_v<P,policy::producer_return_void>)
+				{
+
+					// saves the arrived consumer for the last producer, otherwise if the size of consumer-functions
 					// is larger than size of producer-functions then every functions will be appended as the one that will be executed after it,
 					// that is if there is 1 producer and 5 consumers, they will be executed concurrently ( depending on threads) 
-					std::shared_future<void> foo=in.prod_future;
-														
-				
+					std::shared_future<void> foo = std::any_cast<std::shared_future<void>>(in.prod_future);
+
 					work_foo task
 					{[mv=std::move(mv_),tup=std::make_tuple(std::forward<Args>(args)...),
 					 fut=std::move(foo),&handler=ex_handler_,&success=in.counter]
@@ -343,9 +356,63 @@
 						thread_execution=false;
 						--success;
 					}};
+
+					std::lock_guard<std::mutex> lock(mt_);
+					in.emplace(std::move(task));
+				}
+				else if
+				constexpr (std::is_same_v<P,policy::producer_return_any>)
+				{
+
+					using obj_type=std::remove_reference_t<typename obj<Args...>::type>;
 					
-				std::lock_guard<std::mutex> lock(mt_);		
-				in.emplace(std::move(task));
+
+					std::shared_future<int> foo;
+					try
+					{
+						foo = std::any_cast<std::shared_future<int>>(in.prod_future);
+					}
+					catch(const std::bad_any_cast& e)
+					{
+						std::cerr << e.what() << '\n';
+					}
+			
+
+					work_foo task
+					{[mv=std::move(mv_),tup=std::make_tuple(std::forward<Args>(args)...),
+					 fut=std::move(foo),&handler=ex_handler_,&success=in.counter]
+					(std::atomic<bool>& thread_execution) mutable
+					{
+						thread_execution=true;
+						obj_type obj;
+
+						try
+						{
+							obj=fut.get();
+						}	
+						catch(const std::exception& ex)
+						{
+							thread_execution=false;
+							handler.push_ex(std::current_exception());
+							--success; 
+							return;
+						}
+
+						std::apply
+						(
+							[fun=std::move(mv),&obj]<typename Type,typename...Types>(Type&& v,Types&&...values) mutable
+							{
+								fun(std::forward<obj_type>(obj),std::forward<Types>(values)...);
+							}
+						,tup);
+
+						thread_execution=false;
+						--success;
+					}};
+
+					std::lock_guard<std::mutex> lock(mt_);
+					in.emplace(std::move(task));
+				}
 			}	
 
 
@@ -398,7 +465,9 @@
 int main()
 {
 	TESTS t;
-	t.start_tests<2,2>();
+	t.start_tests<4,4>();
+
+	std::vector<int> v;
 
 	return 0;
 }

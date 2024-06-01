@@ -15,8 +15,8 @@
         struct storage
         {
             void *ptr_{};
-            void (*deleter_)(const storage&){};
             size_t sz_=0;
+            void (*deleter_)(const storage&){}; 
 
         public:
 
