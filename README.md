@@ -2,4 +2,4 @@ Here is presented the program written in C++ that works based on threads queues.
 
 To build the program you need to assemble it in the build directory with the command:
 
-cmake --build .
+        cmake --build .
