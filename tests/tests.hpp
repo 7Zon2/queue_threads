@@ -3,14 +3,10 @@
 #include <list>
 #include <vector>
 #include <thread>
+#include "queue_threads.hpp"
 #include "policy.hpp"
 
-	using namespace std::literals;
-
-	template<size_t Prod, size_t Cons>
-	requires ((Prod > 0) && (Cons > 0))
-	class worker;
-
+		using namespace std::literals;
 
 		void bar(int counter)
 		{
